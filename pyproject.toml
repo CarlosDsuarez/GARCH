@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garch-credit"
+version = "0.1.0"
+description = "Conditional volatility infrastructure for corporate credit markets."
+requires-python = ">=3.11"
+dependencies = [
+    "arch>=7.0",
+    "fredapi>=0.5",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pandas-datareader>=0.10",
+    "pyarrow>=14.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "yfinance>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+markers = [
+    "slow: large simulations; skip with pytest -m 'not slow'",
+    "blocking: category 2/3 look-ahead and analytical oracles; merge gate",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source_pkgs = ["data", "models", "risk", "signals", "backtest", "diagnostics"]
+branch = false
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

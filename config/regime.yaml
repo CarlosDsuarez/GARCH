@@ -1,0 +1,57 @@
+# Markov-switching regime detector. Consumed only via src/models/schema.py ([C2]).
+# Option A (v1): statsmodels MarkovRegression on log realized variance.
+# This is NOT Haas–Mittnik–Paolella MS-GARCH. Path-independent per regime
+# recursions are the HMP target; Option A is the observable-proxy approximation
+# used because `arch` has no MS-GARCH and Option B (R MSGARCH via rpy2) is v2.
+# Operational signals use FILTERED probabilities only ([C1-bis]).
+
+input:
+  measure: log_rv
+  rv_window: 5
+  pca_window: 252
+  pca_min_periods: 60
+  min_observations: 500
+
+fit:
+  k_regimes: 2
+  switching_variance: true
+  trend: c
+  search_reps: 20
+  maxiter: 1000
+  seed: 7
+  backend: markov_log_variance
+
+hysteresis:
+  enter: 0.70
+  exit: 0.30
+
+dwell:
+  min_days: 5
+
+confirmation:
+  consecutive_days: 2
+
+exogenous:
+  percentile: 80.0
+  window: 252
+  min_periods: 60
+  partial_derisk_fraction: 0.5
+
+k3:
+  min_unconditional: 0.10
+  min_expected_duration_days: 10.0
+
+transitions:
+  alarm_per_year: 8.0
+  round_trip_cost_bps: 10.0
+  periods_per_year: 252
+
+plot:
+  output_directory: data/output/regime
+  filename: regime_three_panel.png
+  dpi: 120
+  figsize_width: 11.0
+  figsize_height: 9.0
+
+output:
+  report_markdown: data/output/regime/regime_report.md

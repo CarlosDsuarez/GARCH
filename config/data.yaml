@@ -1,0 +1,239 @@
+# Credit-market data universe and ingestion rules.
+# Every threshold consumed by src/data/credit_loader.py lives here ([C2]).
+
+start_date: "1996-12-31"
+end_date: null
+timezone: "America/New_York"
+fred_api_key_env: "FRED_API_KEY"
+
+cache:
+  directory: "data/cache"
+  filename_template: "{series_id}.parquet"
+
+validation:
+  min_observations: 1000
+  max_jump_sigma: 10.0
+  reversal_tolerance: 0.10
+  robust_sigma_constant: 1.4826
+  min_level_points_for_jump_check: 3
+
+etf_coupon_drop_detection:
+  # Raw (unadjusted) bond-ETF closes drop ~0.30%–0.60% on monthly ex-div dates.
+  # Adjusted total-return series must not exhibit this pattern ([ETF total return]).
+  min_abs_return: 0.003
+  max_abs_return: 0.006
+  min_spacing_calendar_days: 15
+  max_spacing_calendar_days: 35
+  min_events_per_year: 8.0
+  days_per_year: 365.25
+  min_candidates: 2
+  max_unspaced_gaps: 2
+
+# TEDRATE (TED Spread) was discontinued by FRED in January 2022 after the
+# LIBOR → SOFR transition. Do not request it. Stress-substitute with NFCI
+# (and NFCICREDIT) or a hand-built SOFR–OIS spread. Never resurrect TEDRATE.
+discontinued_series:
+  TEDRATE:
+    discontinued_on: "2022-01-31"
+    reason: >
+      FRED discontinued TEDRATE in January 2022 after the USD LIBOR–SOFR
+      transition. LIBOR-based TED is not a valid live stress indicator.
+    substitutes:
+      - NFCI
+      - NFCICREDIT
+
+fred_series:
+  BAMLH0A0HYM2:
+    description: "ICE BofA US High Yield Index OAS"
+    frequency: daily
+    series_type: oas
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: true
+
+  BAMLC0A0CM:
+    description: "ICE BofA US Corporate Index OAS (Investment Grade)"
+    frequency: daily
+    series_type: oas
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  BAMLC0A4CBBB:
+    description: "ICE BofA BBB US Corporate Index OAS"
+    frequency: daily
+    series_type: oas
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  BAMLH0A3HYC:
+    description: "ICE BofA US High Yield CCC & Lower Index OAS"
+    frequency: daily
+    series_type: oas
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  BAMLEMCBPIOAS:
+    description: "ICE BofA Emerging Markets Corporate Plus Index OAS"
+    frequency: daily
+    series_type: oas
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  BAMLH0A0HYM2EY:
+    description: "ICE BofA US High Yield Effective Yield"
+    frequency: daily
+    series_type: yield
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  DGS10:
+    description: "10-Year Treasury Constant Maturity Rate"
+    frequency: daily
+    series_type: yield
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  DGS2:
+    description: "2-Year Treasury Constant Maturity Rate"
+    frequency: daily
+    series_type: yield
+    unit: percent
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  T10Y2Y:
+    description: "10Y-2Y Treasury Spread (curve slope)"
+    frequency: daily
+    series_type: spread
+    unit: percent
+    non_negative: false
+    publication_lag_days: 0
+    primary: false
+
+  T10YIE:
+    description: "10-Year Breakeven Inflation Rate"
+    frequency: daily
+    series_type: rate
+    unit: percent
+    non_negative: false
+    publication_lag_days: 0
+    primary: false
+
+  DFII10:
+    description: "10-Year TIPS real yield"
+    frequency: daily
+    series_type: rate
+    unit: percent
+    non_negative: false
+    publication_lag_days: 0
+    primary: false
+
+  VIXCLS:
+    description: "CBOE Volatility Index (VIX) daily close"
+    frequency: daily
+    series_type: index
+    unit: index
+    non_negative: true
+    publication_lag_days: 0
+    primary: false
+
+  # Weekly financial-conditions indices. FRED stamps the reference week, not
+  # the release date. NFCI/NFCICREDIT are released on Wednesday with data
+  # referring to the prior week — apply publication_lag_days before any
+  # as-of merge onto a daily calendar ([D1] exception, [C1]).
+  NFCI:
+    description: "Chicago Fed National Financial Conditions Index"
+    frequency: weekly
+    series_type: index
+    unit: index
+    non_negative: false
+    publication_lag_days: 7
+    publication_weekday: wednesday
+    primary: false
+
+  NFCICREDIT:
+    description: "NFCI credit sub-index"
+    frequency: weekly
+    series_type: index
+    unit: index
+    non_negative: false
+    publication_lag_days: 7
+    publication_weekday: wednesday
+    primary: false
+
+  STLFSI4:
+    description: "St. Louis Fed Financial Stress Index"
+    frequency: weekly
+    series_type: index
+    unit: index
+    non_negative: false
+    publication_lag_days: 7
+    publication_weekday: friday
+    primary: false
+
+etf_tickers:
+  HYG:
+    description: "iShares iBoxx High Yield Corporate Bond ETF"
+    auto_adjust: true
+  JNK:
+    description: "SPDR Bloomberg High Yield Bond ETF"
+    auto_adjust: true
+  LQD:
+    description: "iShares iBoxx Investment Grade Corporate Bond ETF"
+    auto_adjust: true
+  EMB:
+    description: "iShares JP Morgan USD Emerging Markets Bond ETF"
+    auto_adjust: true
+  AGG:
+    description: "iShares Core US Aggregate Bond ETF"
+    auto_adjust: true
+  IEF:
+    description: "iShares 7-10 Year Treasury Bond ETF"
+    auto_adjust: true
+  TLT:
+    description: "iShares 20+ Year Treasury Bond ETF"
+    auto_adjust: true
+  SHY:
+    description: "iShares 1-3 Year Treasury Bond ETF"
+    auto_adjust: true
+  BKLN:
+    description: "Invesco Senior Loan ETF"
+    auto_adjust: true
+
+etf_download:
+  # yfinance.download(end=...) is exclusive of the end date; FRED is inclusive.
+  end_date_exclusive: true
+  end_exclusive_shift_days: 1
+
+ebp:
+  url: "https://www.federalreserve.gov/econres/notes/feds-notes/ebp_csv.csv"
+  date_column: date
+  ebp_column: ebp
+  gz_spread_column: gz_spread
+  recession_prob_column: null
+  cache_id: EBP
+  # Conservative availability: month-end of the reference month + lag.
+  # Fed typically posts around the 4th business day of the following month;
+  # 45 calendar days after month-end is a no-lookahead upper bound ([C1]).
+  publication_lag_days: 45
+  publication_lag_anchor: month_end
+  sensitivity_lags_days: [30, 45, 60]
+  sensitivity_min_correlation: 0.85
+  aggregation: average
+  vix_series_id: VIXCLS
+  hy_oas_series_id: BAMLH0A0HYM2
+  t10y2y_series_id: T10Y2Y

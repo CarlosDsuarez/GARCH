@@ -1,0 +1,65 @@
+# Dislocation-score parameters. Consumed only via src/signals/schema.py ([C2]).
+# Percentiles are rolling and causal. Full-sample ranks are forbidden ([C1], [S1]).
+
+percentile:
+  window: 750
+  min_periods: 750
+
+default_proxy:
+  # A = GZ expected-default component (gz_spread - ebp). Preferred.
+  # B = trailing 12m US HY default rate (manual Moody's / Fitch ingest).
+  # C = CCC OAS / BBB OAS (daily market proxy; not sentiment-free).
+  option: A
+  gz_spread_column: gz_spread
+  ebp_column: ebp
+  ccc_series_id: BAMLH0A3HYC
+  bbb_series_id: BAMLC0A4CBBB
+  option_b:
+    path: data/manual/hy_default_rate_trailing12m.csv
+    date_column: date
+    value_column: default_rate
+    source_column: source
+    observation_date_column: observation_date
+    notes: >
+      Trailing 12-month US high-yield default rate from the monthly Moody's
+      Default Report (preferred) or Fitch US HY Default Insight. The CSV is
+      a manual ingest: each row must record the report source and the
+      observation_date (publication date of that report). The engine uses a
+      row at backtest date t only when observation_date <= t ([C1]). The
+      `date` column is the reference month-end, not the availability date.
+
+score:
+  function: default_bilinear
+  vol_weight: 0.5
+  level_weight: 0.5
+
+hysteresis:
+  activate: 0.60
+  deactivate: 0.30
+
+position:
+  k: 0.10
+  abs_cap: 1.0
+  size_only_when_active: false
+  min_sigma: 1.0e-8
+
+episodes:
+  - label: "COVID-19 credit crash"
+    start: "2020-03-01"
+    end: "2020-03-31"
+  - label: "2022 QT / gilt / credit"
+    start: "2022-09-01"
+    end: "2022-11-30"
+  - label: "SVB / regional banks"
+    start: "2023-03-01"
+    end: "2023-03-31"
+
+plot:
+  output_directory: data/output/signals
+  filename: dislocation_score.png
+  dpi: 120
+  figsize_width: 12.0
+  figsize_height: 6.0
+
+output:
+  score_table: data/output/signals/dislocation_score.csv

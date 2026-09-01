@@ -1,0 +1,47 @@
+# Walk-forward backtest. Consumed only via src/backtest/schema.py ([C2]).
+# GARCH is re-estimated monthly; parameters are frozen between reestimates ([C1]).
+
+walk_forward:
+  # 1,000 is the OAS EGARCH floor. EBP GJR needs 120 months (~2,520
+  # trading days); the binding constraint starts the walk-forward there.
+  min_estimation_obs: 2520
+  reestimate: monthly
+  reestimate_on: first_business_day
+  window: expanding
+  fit_uses_data_strictly_before_reestimate: true
+
+predictive:
+  horizons: [5, 10, 22, 66]
+  newey_west_lag_equals_horizon: true
+
+episodes:
+  min_gap_calendar_days: 60
+  block_length: 60
+  n_bootstrap: 500
+
+costs:
+  instrument: HYG
+  base_bps: 3.0
+  k: 1.5
+  lqd_base_bps: 2.0
+  sensitivity_multipliers: [1.0, 2.0, 3.0]
+
+benchmarks:
+  level_percentile: 85.0
+  realized_vol_window: 60
+
+metrics:
+  periods_per_year: 252
+  risk_free: 0.0
+
+seed: 7
+
+plot:
+  output_directory: data/output/backtest
+  dpi: 120
+  figsize_width: 11.0
+  figsize_height: 5.5
+
+output:
+  report_markdown: data/output/backtest/signal_backtest.md
+  report_html: data/output/backtest/signal_backtest.html

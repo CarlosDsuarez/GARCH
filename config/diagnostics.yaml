@@ -1,0 +1,41 @@
+# Econometric quality gate for every GARCH estimation ([C7]).
+# Consumed only via src/diagnostics/schema.py ([C2]).
+#
+# Pre-estimation (block A) runs on the input series.
+# Post-estimation (block B) runs on z_t = eps_t / sigma_t.
+# Blocking FAIL verdicts raise DiagnosticGateError; WARN is reported, never hidden.
+
+significance: 0.05
+
+adf:
+  autolag: AIC
+  regression: c   # constant, no trend (returns / stress series)
+
+kpss:
+  regression: c
+  nlags: auto
+
+arch_lm_lags: [5, 10]
+ljung_box_lags: [10, 20]
+rho1_warn: 0.15
+
+igarch_persistence: 0.999
+half_life_mass: 0.5
+
+optimizer_restarts: 5
+llf_atol: 0.01
+
+# Inclán–Tiao (1994) ICSS 5% critical value for max |sqrt(T/2) D_k|.
+icss_critical: 1.358
+
+# A1.joint FAIL is the pre-estimation hard stop (not the individual ADF/KPSS rows).
+blocking_pre: [A1]
+# B2 leftover ARCH is the most important post-estimation test in the battery.
+blocking_post: [B1, B2, B3, B5, B6]
+
+plot:
+  output_directory: data/output/diagnostics
+  qq_filename: qq_standardized_residuals.png
+  dpi: 120
+  figsize_width: 7.0
+  figsize_height: 5.0

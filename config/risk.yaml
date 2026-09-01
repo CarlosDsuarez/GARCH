@@ -1,0 +1,93 @@
+# Filtered Historical Simulation. Consumed only via src/risk/schema.py ([C2]).
+# GJR-GARCH(1,1)-skewt filter; VaR/ES by residual bootstrap. No sqrt(h).
+
+filter:
+  min_observations: 1000
+  dist: skewt
+  mean: constant
+  ljung_box_lags: 10
+  ljung_box_pvalue_min: 0.05
+  p: 1
+  o: 1
+  q: 1
+  rescale: false
+  ftol: 1.0e-6
+  maxiter: 2000
+  ar_lags: 1
+
+fhs:
+  alphas: [0.975, 0.99]
+  n_simulations: 10000
+  seed: 7
+  aggregation: simple
+  scale_sqrt_h: false
+  default_horizon: 1
+
+comparison:
+  historical_window: 250
+  parametric: normal
+
+plot:
+  output_directory: data/output/risk
+  filename: fhs_comparison.png
+  dpi: 120
+  figsize_width: 11.0
+  figsize_height: 5.5
+
+output:
+  report_markdown: data/output/risk/fhs_report.md
+  report_html: data/output/risk/fhs_report.html
+
+backtest:
+  significance: 0.05
+  dq_lags: 4
+  rolling_window: 250
+  acerbi_simulations: 10000
+  seed: 7
+  kupiec_critical: 3.841
+  christoffersen_ind_critical: 3.841
+  christoffersen_cc_critical: 5.991
+  dq_critical_name: chi2
+
+# Exposure overlay on HRP weights. Does not replace the optimiser.
+# m = min(m_vol, m_es, m_regime). Product is forbidden: overlapping risk
+# facets would compound de-risking to near-zero in the cheap-valuation state.
+# leverage_cap=1.0 is a mandate choice (no leverage), not an implementation quirk.
+# ES budget is a 1-day 97.5% loss (es_horizon: 1). Do not sqrt(h)-scale it.
+overlay:
+  sigma_target: 0.10
+  periods_per_year: 252
+  allow_leverage: false
+  leverage_cap: 1.0
+  m_min: 0.0
+  es_alpha: 0.975
+  es_horizon: 1
+  es_budget: 0.025
+  kappa: 0.50
+  smoothing: 0.3
+  band: 0.05
+  turnover_alarm: 2.0
+  legacy_stress_states: [2, 3]
+  aggregator: min
+  sensitivity:
+    kappa: [0.30, 0.50, 0.70]
+    sigma_target: [0.08, 0.10, 0.12]
+    band: [0.03, 0.05, 0.10]
+  episodes:
+    - label: "COVID-19 credit crash"
+      start: "2020-03-01"
+      end: "2020-03-31"
+    - label: "2022 QT / gilt / credit"
+      start: "2022-09-01"
+      end: "2022-11-30"
+    - label: "SVB / regional banks"
+      start: "2023-03-01"
+      end: "2023-03-31"
+  plot:
+    output_directory: data/output/risk
+    filename: overlay_sensitivity.png
+    dpi: 120
+    figsize_width: 10.0
+    figsize_height: 6.0
+  output:
+    report_markdown: data/output/risk/overlay_report.md
