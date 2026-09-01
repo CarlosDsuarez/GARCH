@@ -13,6 +13,7 @@ from models.oas_egarch import (
     ModelInvalidError,
     OASVolatilityModel,
     SignConventionError,
+    _ARMA11,
     assert_leverage_sign,
     build_credit_stress_return,
     half_life_days,
@@ -251,3 +252,16 @@ def test_fit_rejects_short_sample(tmp_path: Path) -> None:
     model = OASVolatilityModel(make_model_config(tmp_path), series_id="BAMLH0A0HYM2")
     with pytest.raises(ModelInvalidError, match="observations"):
         model.fit(oas)
+
+
+def test_arma11_mean_bounds_match_num_params() -> None:
+    """arch.fit concatenates mean bounds with vol/dist; a spare theta bound
+    makes SLSQP raise 'number of bounds is not compatible with x0' (CI 3.11).
+    """
+    from arch.univariate import EGARCH, StudentsT
+
+    y = pd.Series(np.linspace(-0.2, 0.2, 80), index=pd.bdate_range("2015-01-02", periods=80))
+    model = _ARMA11(y, volatility=EGARCH(p=1, o=1, q=1), distribution=StudentsT(), rescale=False)
+    assert len(model.bounds()) == model.num_params
+    assert model.parameter_names()[-1] == "theta"
+    assert model.bounds()[-1] == (-0.999, 0.999)

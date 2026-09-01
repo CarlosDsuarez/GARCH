@@ -432,7 +432,11 @@ class _ARMA11(ARX):
         return np.append(super().starting_values(), 0.0)
 
     def bounds(self) -> list[tuple[float, float]]:
-        return list(super().bounds()) + [(-0.999, 0.999)]
+        # ARCHModel.bounds() already allocates self.num_params slots.
+        # Appending theta a second time makes SLSQP see more bounds than x0.
+        bounds = list(super().bounds())
+        bounds[-1] = (-0.999, 0.999)
+        return bounds
 
     def constraints(self) -> tuple[np.ndarray, np.ndarray]:
         a, b = super().constraints()
