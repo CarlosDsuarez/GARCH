@@ -6,7 +6,18 @@ Los umbrales viven en `config/`. El código no hardcodea knobs.
 
 ## Setup
 
-Python ≥ 3.11. Para datos en vivo: `FRED_API_KEY` en el entorno.
+Python ≥ 3.11.
+
+Los scripts de datos piden una clave **gratis** de FRED. Los tests no.
+
+1. Pídela en https://fred.stlouisfed.org/docs/api/api_key.html (cuenta + un clic).
+2. En la misma terminal donde vas a correr el repo:
+
+```bash
+export FRED_API_KEY="pega_aqui_la_clave"
+```
+
+Para no repetirlo: añade esa línea a `~/.zshrc`.
 
 ```bash
 python -m venv .venv

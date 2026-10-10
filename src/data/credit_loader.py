@@ -829,7 +829,10 @@ class CreditDataLoader:
         key = os.environ.get(self.config.fred_api_key_env)
         if not key:
             raise RuntimeError(
-                f"environment variable {self.config.fred_api_key_env} is not set"
+                f"{self.config.fred_api_key_env} is not set. "
+                "Request a free key at https://fred.stlouisfed.org/docs/api/api_key.html "
+                f"then `export {self.config.fred_api_key_env}=...` in this shell "
+                "(or add it to ~/.zshrc). Tests do not need it."
             )
         self._fred_client = Fred(api_key=key)
         return self._fred_client
