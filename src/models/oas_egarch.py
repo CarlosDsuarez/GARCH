@@ -253,40 +253,54 @@ def assert_leverage_sign(
     cond_vol: pd.Series,
     spec: SignTestConfig,
 ) -> dict[str, float]:
-    """Require higher next-day conditional vol after the widest spread days.
+    """Require a larger rise in conditional vol after the widest spread days.
 
-    EGARCH updates :math:`\\sigma_{t+1}` from :math:`e_t`. After the largest
-    widenings (:math:`r_t` in the lower tail) mean :math:`\\sigma_{t+1}` must
-    exceed the mean after the largest tightenings. Failure means the series
-    was fed with the equity sign convention.
+    EGARCH updates :math:`\\sigma_{t+1}` from :math:`e_t`. The statistic is the
+    change :math:`\\ln\\sigma_{t+1}-\\ln\\sigma_t` averaged over the largest
+    widenings (:math:`r_t` in the lower tail) versus the largest tightenings.
+    It must be larger after widenings; failure means the series was fed with
+    the equity sign convention.
+
+    The *level* of :math:`\\sigma_{t+1}` is not used: the largest tightenings
+    are crisis recoveries (EBP 2009-05, 2001-11, 1987-10) where vol is already
+    high before the shock, so the level comparison rejects the correct sign.
+    Levels are still returned for reporting.
     """
     frame = pd.concat({"r": r, "vol": cond_vol}, axis=1).dropna()
     next_vol = frame["vol"].shift(-1)
+    dlog_vol = np.log(next_vol / frame["vol"])
     q = spec.tail_percentile / 100.0
     wide = frame["r"] <= frame["r"].quantile(q)
     tight = frame["r"] >= frame["r"].quantile(1.0 - q)
-    wide_vol = next_vol[wide].dropna()
-    tight_vol = next_vol[tight].dropna()
+    wide_dlog = dlog_vol[wide].dropna()
+    tight_dlog = dlog_vol[tight].dropna()
     if (
-        wide_vol.shape[0] < spec.min_tail_observations
-        or tight_vol.shape[0] < spec.min_tail_observations
+        wide_dlog.shape[0] < spec.min_tail_observations
+        or tight_dlog.shape[0] < spec.min_tail_observations
     ):
         raise ModelInvalidError(
             "not enough tail observations for the leverage sign test"
         )
-    mean_wide = float(wide_vol.mean())
-    mean_tight = float(tight_vol.mean())
+    out = {
+        "mean_dlog_vol_after_widening": float(wide_dlog.mean()),
+        "mean_dlog_vol_after_tightening": float(tight_dlog.mean()),
+        "mean_vol_after_widening": float(next_vol[wide].dropna().mean()),
+        "mean_vol_after_tightening": float(next_vol[tight].dropna().mean()),
+    }
     logger.info(
-        "leverage sign test mean_sigma_after_widening=%.6f after_tightening=%.6f",
-        mean_wide,
-        mean_tight,
+        "leverage sign test mean_dlog_sigma_after_widening=%.6f after_tightening=%.6f "
+        "(levels %.6f / %.6f)",
+        out["mean_dlog_vol_after_widening"],
+        out["mean_dlog_vol_after_tightening"],
+        out["mean_vol_after_widening"],
+        out["mean_vol_after_tightening"],
     )
-    if mean_wide <= mean_tight:
+    if out["mean_dlog_vol_after_widening"] <= out["mean_dlog_vol_after_tightening"]:
         raise SignConventionError(
-            "conditional volatility is not higher after widenings; "
+            "conditional volatility does not rise more after widenings; "
             "the credit-stress sign convention is inverted"
         )
-    return {"mean_vol_after_widening": mean_wide, "mean_vol_after_tightening": mean_tight}
+    return out
 
 
 def half_life_days(beta: float, spec: VarianceConfig) -> float:

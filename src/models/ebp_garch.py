@@ -1,4 +1,4 @@
-"""GJR-GARCH(1,1)-t on the first difference of the Excess Bond Premium.
+"""EGARCH(1,1)-t on the first difference of the Excess Bond Premium.
 
 Target
 ------
@@ -11,23 +11,28 @@ EBP in levels is not stationary in short samples. Work with
     r_t = -\\Delta\\mathrm{EBP}_t.
 
 No log: EBP can be negative (spreads compressed versus expected default).
-Rising EBP is bad news, so the sign is inverted to match
-:math:`I[\\varepsilon_{t-1}<0]`.
+Rising EBP is bad news, so the sign is inverted: stress is :math:`r_t<0`,
+the same convention as the OAS credit-stress return.
 
-Variance (Glosten–Jagannathan–Runkle 1993)
+Variance (Nelson 1991, ``arch`` convention)
 
 .. math::
 
-    \\sigma_t^2
+    \\ln\\sigma_t^2
     = \\omega
-    + \\alpha\\varepsilon_{t-1}^2
-    + \\gamma\\varepsilon_{t-1}^2 I[\\varepsilon_{t-1}<0]
-    + \\beta\\sigma_{t-1}^2
+    + \\alpha\\bigl(|e_{t-1}|-\\mathbb{E}|e_{t-1}|\\bigr)
+    + \\gamma e_{t-1}
+    + \\beta\\ln\\sigma_{t-1}^2
 
-with :math:`\\omega>0`, :math:`\\alpha\\ge 0`, :math:`\\alpha+\\gamma\\ge 0`,
-:math:`\\beta\\ge 0`, and :math:`\\alpha+\\gamma/2+\\beta<1`. After the sign
-convention, the hypothesis is :math:`\\gamma>0`. Half-life uses the GJR
-persistence, not the EGARCH :math:`\\beta` formula.
+with :math:`e_t=\\varepsilon_t/\\sigma_t`. Stationarity is
+:math:`|\\beta|<1`; persistence and half-life use :math:`\\beta`. The
+leverage hypothesis is :math:`\\gamma<0` (stress shocks raise variance).
+
+Why not GJR: on monthly ΔEBP the GJR-GARCH estimate sits on the IGARCH
+boundary :math:`\\alpha+\\gamma/2+\\beta=1` for every sample start, mean
+specification and scale tried — the spurious integration that unmodelled
+variance breaks produce (Lamoureux and Lastrapes, 1990). Its half-life is
+then undefined. EGARCH on the same data is stationary with a better BIC.
 
 Signal layers (partial circularity)
 ----------------------------------
@@ -42,9 +47,12 @@ EBP vol to OAS vol is partly circular. Three layers are mandatory:
 
 References
 ----------
-Glosten, L. R., Jagannathan, R. and Runkle, D. E. (1993). On the Relation
-between the Expected Value and the Volatility of the Nominal Excess Return
-on Stocks. *Journal of Finance*, 48(5), 1779–1801.
+Nelson, D. B. (1991). Conditional Heteroskedasticity in Asset Returns: A New
+Approach. *Econometrica*, 59(2), 347–370.
+
+Lamoureux, C. G. and Lastrapes, W. D. (1990). Persistence in Variance,
+Structural Change, and the GARCH Model. *Journal of Business & Economic
+Statistics*, 8(2), 225–234.
 """
 
 from __future__ import annotations
@@ -70,11 +78,11 @@ from models.oas_egarch import (
     SignConventionError,
     _converged,
     assert_leverage_sign,
+    half_life_days,
 )
 from models.schema import (
     EbpModelConfig,
     EbpStationarityConfig,
-    EbpVarianceConfig,
     ModelConfig,
     load_model_config,
 )
@@ -88,9 +96,7 @@ __all__ = [
     "EbpStressSeries",
     "SignalLayer",
     "assert_difference_stationary",
-    "assert_gjr_constraints",
     "build_ebp_stress_return",
-    "gjr_half_life",
     "originate_signal",
     "signal_may_originate",
     "write_comparative_report",
@@ -141,7 +147,7 @@ class EbpEstimationReport:
     def as_text(self) -> str:
         return "\n".join(
             [
-                f"EBP GJR-GARCH  series={self.series_id} layer={self.layer}",
+                f"EBP EGARCH  series={self.series_id} layer={self.layer}",
                 f"n_obs={self.n_obs}  window={self.start} / {self.end}",
                 f"mean={self.mean_spec}  dist={self.dist}  converged={self.converged}",
                 f"llf={self.llf:.4f}  AIC={self.aic:.4f}  BIC={self.bic:.4f}",
@@ -246,44 +252,6 @@ def assert_difference_stationary(
     return {"adf_pvalue": adf_p, "kpss_pvalue": kpss_p}
 
 
-def assert_gjr_constraints(
-    omega: float,
-    alpha: float,
-    gamma: float,
-    beta: float,
-    spec: EbpVarianceConfig | Any,
-) -> float:
-    """Enforce GJR positivity and :math:`\\alpha+\\gamma/2+\\beta<1`."""
-    cap = float(spec.stationarity_alpha_half_gamma_beta_max)
-    if omega <= 0.0:
-        raise ModelInvalidError(f"GJR omega={omega} must be > 0")
-    if alpha < 0.0:
-        raise ModelInvalidError(f"GJR alpha={alpha} must be >= 0")
-    if alpha + gamma < 0.0:
-        raise ModelInvalidError(f"GJR alpha+gamma={alpha + gamma} must be >= 0")
-    if beta < 0.0:
-        raise ModelInvalidError(f"GJR beta={beta} must be >= 0")
-    persistence = alpha + 0.5 * gamma + beta
-    if persistence >= cap:
-        raise ModelInvalidError(
-            f"GJR variance not stationary: α+γ/2+β={persistence} >= {cap}"
-        )
-    return persistence
-
-
-def gjr_half_life(
-    alpha: float,
-    gamma: float,
-    beta: float,
-    spec: EbpVarianceConfig | Any,
-) -> float:
-    """Shock half-life :math:`\\ln(m)/\\ln(\\alpha+\\gamma/2+\\beta)`."""
-    persistence = assert_gjr_constraints(1.0, alpha, gamma, beta, spec)
-    if persistence <= 0.0:
-        raise ModelInvalidError(f"GJR half-life undefined for persistence={persistence}")
-    return float(math.log(spec.half_life_mass) / math.log(persistence))
-
-
 def signal_may_originate(layer: SignalLayer, config: ModelConfig) -> bool:
     _require_ebp(config)
     return layer == "primary_monthly"
@@ -371,7 +339,7 @@ def write_comparative_report(
 
 
 class EBPVolatilityModel:
-    """Constant / AR(1) mean + GJR-GARCH(1,1)-t on :math:`r_t=-\\Delta\\mathrm{EBP}_t`."""
+    """Constant / AR(1) mean + EGARCH(1,1)-t on :math:`r_t=-\\Delta\\mathrm{EBP}_t`."""
 
     def __init__(
         self,
@@ -410,7 +378,7 @@ class EBPVolatilityModel:
         stress = build_ebp_stress_return(ebp_levels, self.config)
         if stress.r.shape[0] < self.ebp.min_observations:
             raise ModelInvalidError(
-                f"insufficient observations for GJR-GARCH: {stress.r.shape[0]} < "
+                f"insufficient observations for EGARCH: {stress.r.shape[0]} < "
                 f"{self.ebp.min_observations}"
             )
         guard = self.config.stale_zero_guard
@@ -430,10 +398,15 @@ class EBPVolatilityModel:
             std = pd.Series(fitted.std_resid).dropna()
             lb_stat, lb_p = _ljung_box(std, self.ebp.mean.ljung_box_lags)
         if lb_p <= self.ebp.mean.ljung_box_pvalue_min:
-            raise ModelInvalidError(
+            message = (
                 f"Ljung-Box Q({self.ebp.mean.ljung_box_lags}) on standardized "
                 f"residuals p={lb_p:.4f} <= {self.ebp.mean.ljung_box_pvalue_min}"
             )
+            if signal_may_originate(self.layer, self.config):
+                raise ModelInvalidError(message)
+            # Chow-Lin daily EBP is smooth by construction; the layer only
+            # times a signal the monthly model already fired.
+            logger.warning("%s on %s layer (diagnostic only)", message, self.layer)
         if float(getattr(fitted, "scale", 1.0)) != 1.0:
             raise ModelInvalidError(
                 f"arch rescaled the series (scale={fitted.scale}); rescale=False was required"
@@ -449,8 +422,19 @@ class EBPVolatilityModel:
         gamma = _first_param(params, ("gamma[1]", "gamma"))
         beta = _first_param(params, ("beta[1]", "beta"))
         if None in (omega, alpha, gamma, beta):
-            raise ModelInvalidError("GJR-GARCH did not return omega/alpha/gamma/beta")
-        persistence = assert_gjr_constraints(omega, alpha, gamma, beta, self.ebp.variance)
+            raise ModelInvalidError("EGARCH did not return omega/alpha/gamma/beta")
+        half_life = half_life_days(float(beta), self.ebp.variance)
+        gamma_p = _first_pvalue(params, ("gamma[1]", "gamma"))
+        spec = self.ebp.variance
+        if (
+            gamma_p is not None
+            and gamma_p < spec.significance_level
+            and math.copysign(1, gamma) != spec.expected_egarch_gamma_sign
+        ):
+            raise SignConventionError(
+                f"EGARCH gamma={gamma:.4f} (p={gamma_p:.4f}) has the wrong sign; "
+                f"expected sign {spec.expected_egarch_gamma_sign} on r = -ΔEBP"
+            )
         vol_index = stress.r.index[-len(fitted.conditional_volatility) :]
         cond_vol = pd.Series(np.asarray(fitted.conditional_volatility), index=vol_index)
         assert_leverage_sign(stress.r.reindex(cond_vol.index), cond_vol, self.ebp.sign_test)
@@ -467,31 +451,32 @@ class EBPVolatilityModel:
             llf=float(fitted.loglikelihood),
             aic=float(fitted.aic),
             bic=float(fitted.bic),
-            half_life=gjr_half_life(alpha, gamma, beta, self.ebp.variance),
+            half_life=half_life,
             residual_ljung_box_pvalue=lb_p,
             residual_ljung_box_stat=lb_stat,
             nu=_first_param(params, ("nu", "eta")),
             gamma=gamma,
-            gamma_pvalue=_first_pvalue(params, ("gamma[1]", "gamma")),
+            gamma_pvalue=gamma_p,
             leverage_confirmed=True,
             adf_pvalue=self.stationarity["adf_pvalue"],
             kpss_pvalue=self.stationarity["kpss_pvalue"],
             omega=omega,
             alpha=alpha,
             beta=beta,
-            persistence=persistence,
+            persistence=float(beta),
             seed=self.config.seed,
             converged=True,
             scale=float(getattr(fitted, "scale", 1.0)),
             may_originate=signal_may_originate(self.layer, self.config),
         )
         logger.info(
-            "fit EBP series=%s layer=%s n_obs=%s gamma=%s persistence=%.4f",
+            "fit EBP series=%s layer=%s n_obs=%s gamma=%s beta=%.4f half_life=%.2f",
             self.series_id,
             self.layer,
             self.report.n_obs,
             gamma,
-            persistence,
+            beta,
+            half_life,
         )
         return self
 

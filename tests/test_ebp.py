@@ -1,4 +1,4 @@
-"""EBP ingest, Chow-Lin consistency, publication lag, and GJR-GARCH tests.
+"""EBP ingest, Chow-Lin consistency, publication lag, and EGARCH tests.
 
 Synthetic CSV schema: ISO dates (YYYY-MM-DD), invented EBP levels
 (e.g. 0.45). No official Fed vintages are stored here.
@@ -27,9 +27,7 @@ from data.schema import load_data_config
 from models.ebp_garch import (
     EBPVolatilityModel,
     assert_difference_stationary,
-    assert_gjr_constraints,
     build_ebp_stress_return,
-    gjr_half_life,
     originate_signal,
     signal_may_originate,
     write_comparative_report,
@@ -92,7 +90,7 @@ def _ebp_model_block(tmp_path: Path) -> dict:
             "adf_maxlag": 8,
         },
         "variance": {
-            "vol": "GARCH",
+            "vol": "EGARCH",
             "p": 1,
             "o": 1,
             "q": 1,
@@ -101,8 +99,8 @@ def _ebp_model_block(tmp_path: Path) -> dict:
             "maxiter": 500,
             "half_life_mass": 0.5,
             "significance_level": 0.05,
-            "expected_gjr_gamma_sign": 1,
-            "stationarity_alpha_half_gamma_beta_max": 1.0,
+            "expected_egarch_gamma_sign": -1,
+            "stationarity_abs_beta_max": 1.0,
         },
         "distribution": {
             "candidates": ["t"],
@@ -233,13 +231,14 @@ def test_production_data_config_has_ebp_lag_and_anchors() -> None:
     assert config.ebp.t10y2y_series_id == "T10Y2Y"
 
 
-def test_production_params_have_gjr_ebp_block() -> None:
+def test_production_params_have_egarch_ebp_block() -> None:
     config = load_model_config(PRODUCTION_PARAMS)
     assert config.ebp is not None
     assert config.ebp.invert_sign is True
-    assert config.ebp.variance.vol == "GARCH"
+    assert config.ebp.variance.vol == "EGARCH"
     assert config.ebp.variance.o == 1
-    assert config.ebp.variance.expected_gjr_gamma_sign == 1
+    assert config.ebp.variance.expected_egarch_gamma_sign == -1
+    assert config.ebp.variance.stationarity_abs_beta_max <= 1.0
     assert config.ebp.signal.daily_may_originate is False
     assert config.ebp.min_observations >= 120
 
@@ -419,6 +418,28 @@ def test_leverage_sign_raises_when_vol_higher_after_ebp_compression(tmp_path: Pa
         assert_leverage_sign(r, vol, config.ebp.sign_test)
 
 
+def test_leverage_sign_controls_for_pre_shock_volatility(tmp_path: Path) -> None:
+    """Largest EBP falls are crisis recoveries: vol is already high before them.
+
+    Next-period vol *level* is then higher after tightenings even when widenings
+    raise vol far more. The test must compare the change in log vol.
+    """
+    idx = pd.bdate_range("2000-01-03", periods=400)
+    rng = np.random.default_rng(5)
+    r = pd.Series(rng.normal(0.0, 0.1, size=len(idx)), index=idx)
+    vol = pd.Series(1.0, index=idx)
+    for i in range(5, len(idx) - 2, 20):
+        r.iloc[i] = -3.0  # widening in a calm spell: vol doubles
+        vol.iloc[i + 1] = 2.0
+        r.iloc[i + 10] = 3.0  # tightening during a recovery: vol high, eases
+        vol.iloc[i + 10] = 3.0
+        vol.iloc[i + 11] = 2.9
+    config = make_ebp_model_config(tmp_path)
+    out = assert_leverage_sign(r, vol, config.ebp.sign_test)
+    assert out["mean_dlog_vol_after_widening"] > out["mean_dlog_vol_after_tightening"]
+    assert out["mean_vol_after_widening"] < out["mean_vol_after_tightening"]
+
+
 def test_stationarity_gate_accepts_i1_rejects_i2(tmp_path: Path) -> None:
     rng = np.random.default_rng(11)
     idx = pd.bdate_range("2000-01-03", periods=400)
@@ -430,27 +451,76 @@ def test_stationarity_gate_accepts_i1_rejects_i2(tmp_path: Path) -> None:
         assert_difference_stationary(i2, spec)
 
 
-def test_gjr_constraint_checker() -> None:
-    class _Spec:
-        stationarity_alpha_half_gamma_beta_max = 1.0
+def test_legacy_gjr_ebp_variance_block_is_rejected_with_reason(tmp_path: Path) -> None:
+    block = _ebp_model_block(tmp_path)
+    block["variance"] = {
+        **{k: v for k, v in block["variance"].items() if k not in {
+            "expected_egarch_gamma_sign", "stationarity_abs_beta_max"}},
+        "vol": "GARCH",
+        "expected_gjr_gamma_sign": 1,
+        "stationarity_alpha_half_gamma_beta_max": 1.0,
+    }
+    with pytest.raises(ValidationError, match="IGARCH"):
+        EbpModelConfig.model_validate(block)
 
-    assert_gjr_constraints(0.02, 0.05, 0.10, 0.80, _Spec())
-    with pytest.raises(ModelInvalidError):
-        assert_gjr_constraints(0.02, 0.05, 0.10, 0.95, _Spec())
-    with pytest.raises(ModelInvalidError):
-        assert_gjr_constraints(-0.01, 0.05, 0.10, 0.80, _Spec())
-    with pytest.raises(ModelInvalidError):
-        assert_gjr_constraints(0.02, 0.05, -0.10, 0.80, _Spec())
+
+def _egarch_ebp_levels(n: int, *, seed: int, gamma: float = -0.12, beta: float = 0.94) -> pd.Series:
+    from helpers import simulate_egarch
+
+    r = simulate_egarch(n, seed=seed, omega=-0.10, alpha=0.15, gamma=gamma, beta=beta)
+    # r = -ΔEBP, so EBP = level0 - cumsum(r)
+    return (0.45 - r.cumsum()).rename("ebp")
 
 
-def test_gjr_half_life_uses_persistence_not_egarch_beta() -> None:
-    class _Spec:
-        half_life_mass = 0.5
-        stationarity_alpha_half_gamma_beta_max = 1.0
+def test_ebp_egarch_recovers_beta_and_leverage_sign(tmp_path: Path) -> None:
+    model = EBPVolatilityModel(make_ebp_model_config(tmp_path), series_id="EBP")
+    model.fit(_egarch_ebp_levels(1500, seed=21))
+    report = model.summary()
+    assert report.beta == pytest.approx(0.94, abs=0.05)
+    assert report.gamma is not None and report.gamma < 0.0
+    assert report.persistence == pytest.approx(report.beta)
+    assert report.half_life == pytest.approx(np.log(0.5) / np.log(report.beta))
+    assert "EGARCH" in report.as_text()
 
-    persistence = 0.05 + 0.10 / 2.0 + 0.80
-    expected = float(np.log(0.5) / np.log(persistence))
-    assert gjr_half_life(0.05, 0.10, 0.80, _Spec()) == pytest.approx(expected)
+
+def test_ebp_egarch_rejects_beta_beyond_stationarity_cap(tmp_path: Path) -> None:
+    config = make_ebp_model_config(
+        tmp_path,
+        ebp={"variance": {**_ebp_model_block(tmp_path)["variance"], "stationarity_abs_beta_max": 0.5}},
+    )
+    with pytest.raises(ModelInvalidError, match="stationarity"):
+        EBPVolatilityModel(config, series_id="EBP").fit(_egarch_ebp_levels(1500, seed=21))
+
+
+def test_ebp_egarch_rejects_inverted_leverage(tmp_path: Path) -> None:
+    model = EBPVolatilityModel(make_ebp_model_config(tmp_path), series_id="EBP")
+    with pytest.raises(SignConventionError):
+        model.fit(_egarch_ebp_levels(1500, seed=21, gamma=0.25))
+
+
+def _autocorrelated_ebp_levels() -> pd.Series:
+    from helpers import simulate_egarch
+
+    r = simulate_egarch(800, seed=33, omega=-0.10, alpha=0.15, gamma=-0.12, beta=0.94)
+    r = (r + 0.8 * r.shift(2)).dropna()  # MA(2): an AR(1) mean cannot absorb it
+    return (0.45 - r.cumsum()).rename("ebp")
+
+
+def test_ljung_box_blocks_primary_monthly_layer(tmp_path: Path) -> None:
+    model = EBPVolatilityModel(make_ebp_model_config(tmp_path), series_id="EBP")
+    with pytest.raises(ModelInvalidError, match="Ljung-Box"):
+        model.fit(_autocorrelated_ebp_levels())
+
+
+def test_ljung_box_is_diagnostic_only_on_daily_layers(tmp_path: Path) -> None:
+    """Chow-Lin daily EBP is autocorrelated by construction and never originates."""
+    config = make_ebp_model_config(tmp_path)
+    for layer in ("daily_full", "daily_vix_only"):
+        model = EBPVolatilityModel(config, series_id="EBP", layer=layer)
+        model.fit(_autocorrelated_ebp_levels())
+        assert model.report is not None
+        assert model.report.residual_ljung_box_pvalue < 0.05
+        assert model.report.may_originate is False
 
 
 # ---------------------------------------------------------------------------

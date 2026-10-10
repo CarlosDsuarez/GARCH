@@ -1,4 +1,4 @@
-"""Fit GJR-GARCH on official monthly EBP and write the three-layer report.
+"""Fit EGARCH on official monthly EBP and write the three-layer report.
 
 Usage
 -----
@@ -29,7 +29,7 @@ from models.schema import load_model_config  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Estimate EBP GJR-GARCH layers.")
+    parser = argparse.ArgumentParser(description="Estimate EBP EGARCH layers.")
     parser.add_argument("--data-config", type=Path, default=ROOT / "config" / "data.yaml")
     parser.add_argument("--model-config", type=Path, default=ROOT / "config" / "params.yaml")
     parser.add_argument("--asof", type=str, default=None)

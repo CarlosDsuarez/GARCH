@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -135,7 +135,7 @@ class EbpStationarityConfig(BaseModel):
 class EbpVarianceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    vol: Literal["GARCH"]
+    vol: Literal["EGARCH"]
     p: int = Field(ge=1)
     o: int = Field(ge=1)
     q: int = Field(ge=1)
@@ -144,8 +144,21 @@ class EbpVarianceConfig(BaseModel):
     maxiter: int = Field(ge=1)
     half_life_mass: float = Field(gt=0, lt=1)
     significance_level: float = Field(gt=0, lt=1)
-    expected_gjr_gamma_sign: Literal[-1, 1]
-    stationarity_alpha_half_gamma_beta_max: float = Field(gt=0)
+    expected_egarch_gamma_sign: Literal[-1, 1]
+    stationarity_abs_beta_max: float = Field(gt=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_gjr(cls, data: Any) -> Any:
+        legacy = {"expected_gjr_gamma_sign", "stationarity_alpha_half_gamma_beta_max"}
+        if isinstance(data, dict) and (data.get("vol") == "GARCH" or legacy & set(data)):
+            raise ValueError(
+                "EBP variance is EGARCH, not GJR: on monthly ΔEBP the GJR estimate "
+                "sits on the IGARCH boundary (α+γ/2+β = 1) in every sample tried, so "
+                "its half-life is undefined. Use vol: EGARCH, "
+                "expected_egarch_gamma_sign and stationarity_abs_beta_max."
+            )
+        return data
 
     @field_validator("rescale")
     @classmethod

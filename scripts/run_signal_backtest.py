@@ -121,7 +121,7 @@ class OASWalkForwardEstimator:
 
 
 class EBPWalkForwardEstimator:
-    """Fit monthly GJR-GARCH; map frozen sigma onto the daily calendar."""
+    """Fit monthly EBP EGARCH; map frozen sigma onto the daily calendar."""
 
     def __init__(self, config: ModelConfig, series_id: str = "EBP") -> None:
         self.config = config
