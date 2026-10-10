@@ -45,7 +45,8 @@ def main() -> int:
     prices = credit.fetch_etf(
         [args.ticker], start=start, end=asof, force_refresh=args.force_refresh
     )
-    returns = prices[args.ticker].astype("float64").pct_change().rename(args.ticker)
+    # dropna first: a masked vendor-stale print must not erase the next real return
+    returns = prices[args.ticker].dropna().astype("float64").pct_change().rename(args.ticker)
     engine = FHSEngine(cfg).fit(returns)
     both = engine.var_es(horizon=1)
     paths = engine.write_report()

@@ -221,7 +221,9 @@ def main() -> int:
     fred_ids = [hy_id, vix_id, spec.ccc_series_id, spec.bbb_series_id]
     oas = credit.fetch_fred(fred_ids, start=start, end=asof, force_refresh=args.force_refresh)
     prices = credit.fetch_etf([ticker], start=start, end=asof, force_refresh=args.force_refresh)
-    credit_returns = prices[ticker].astype("float64").pct_change().rename("credit_return")
+    credit_returns = (
+        prices[ticker].dropna().astype("float64").pct_change().rename("credit_return")
+    )
 
     calendar = (
         credit_returns.dropna().index.intersection(oas[hy_id].dropna().index).intersection(

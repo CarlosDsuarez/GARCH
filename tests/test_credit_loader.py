@@ -462,3 +462,117 @@ def test_coverage_report_records_nan_drop_share(tmp_path: Path) -> None:
     assert row["n_obs"] == 3
     assert row["n_nan_dropped"] == 1
     assert row["pct_nan_dropped"] == pytest.approx(25.0)
+
+
+# ---------------------------------------------------------------------------
+# Refresh failures, truncated history, vendor stale prices
+# ---------------------------------------------------------------------------
+
+
+class _FailingFredClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_series(self, series_id: str, observation_start=None, observation_end=None):
+        self.calls.append(series_id)
+        raise ConnectionError("FRED unreachable")
+
+
+def _seed_cache(tmp_path: Path, series: pd.Series) -> tuple[str, str]:
+    start, end = _window(series)
+    _loader(tmp_path, fred_client=FakeFredClient({"BAMLH0A0HYM2": series})).fetch_fred(
+        ["BAMLH0A0HYM2"], start=start, end=end
+    )
+    return start, end
+
+
+def test_failed_refresh_falls_back_to_recent_cache_with_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    series = _daily_levels()
+    start, end = _seed_cache(tmp_path, series)
+    later = (pd.Timestamp(end) + pd.Timedelta(days=3)).strftime("%Y-%m-%d")
+    failing = _FailingFredClient()
+    loader = _loader(tmp_path, fred_client=failing)
+    with caplog.at_level("WARNING"):
+        frame = loader.fetch_fred(["BAMLH0A0HYM2"], start=start, end=later)
+    assert failing.calls == ["BAMLH0A0HYM2"]
+    assert frame["BAMLH0A0HYM2"].dropna().shape[0] == series.shape[0]
+    assert "stale cache" in caplog.text
+
+
+def test_failed_refresh_with_too_stale_cache_raises(tmp_path: Path) -> None:
+    series = _daily_levels()
+    start, end = _seed_cache(tmp_path, series)
+    much_later = (pd.Timestamp(end) + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+    loader = _loader(tmp_path, fred_client=_FailingFredClient())
+    with pytest.raises(ConnectionError):
+        loader.fetch_fred(["BAMLH0A0HYM2"], start=start, end=much_later)
+
+
+def test_failed_refresh_never_serves_cache_that_misses_the_start(tmp_path: Path) -> None:
+    series = _daily_levels()
+    start, end = _seed_cache(tmp_path, series)
+    earlier = (pd.Timestamp(start) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    loader = _loader(tmp_path, fred_client=_FailingFredClient())
+    with pytest.raises(ConnectionError):
+        loader.fetch_fred(["BAMLH0A0HYM2"], start=earlier, end=end)
+
+
+def test_missing_api_key_without_cache_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    loader = _loader(tmp_path)
+    with pytest.raises(RuntimeError, match="FRED_API_KEY"):
+        loader.fetch_fred(["BAMLH0A0HYM2"], start="2020-01-01", end="2020-03-01")
+
+
+def test_empty_etf_download_raises_instead_of_returning_nothing(tmp_path: Path) -> None:
+    empty = _etf_ohlcv(pd.Series(dtype="float64", index=pd.DatetimeIndex([])))
+    loader = _loader(tmp_path, etf_downloader=FakeEtfDownloader({"HYG": empty}))
+    with pytest.raises(SeriesValidationError, match="no data"):
+        loader.fetch_etf(["HYG"], start="2020-01-02", end="2020-02-28")
+
+
+def test_empty_etf_download_falls_back_to_recent_cache(tmp_path: Path) -> None:
+    idx = pd.bdate_range("2020-01-02", periods=40)
+    prices = pd.Series(np.linspace(80.0, 85.0, len(idx)), index=idx)
+    end = idx[-1].strftime("%Y-%m-%d")
+    _loader(tmp_path, etf_downloader=FakeEtfDownloader({"HYG": _etf_ohlcv(prices)})).fetch_etf(
+        ["HYG"], start="2020-01-02", end=end
+    )
+    empty = _etf_ohlcv(pd.Series(dtype="float64", index=pd.DatetimeIndex([])))
+    later = (idx[-1] + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+    loader = _loader(tmp_path, etf_downloader=FakeEtfDownloader({"HYG": empty}))
+    frame = loader.fetch_etf(["HYG"], start="2020-01-02", end=later)
+    assert frame["HYG"].dropna().shape[0] == len(idx)
+
+
+def test_truncated_fred_history_is_reported(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    series = _daily_levels(start="2023-10-03", periods=60)
+    loader = _loader(tmp_path, fred_client=FakeFredClient({"BAMLH0A0HYM2": series}))
+    end = series.index.max().strftime("%Y-%m-%d")
+    with caplog.at_level("WARNING"):
+        frame = loader.fetch_fred(["BAMLH0A0HYM2"], start="2020-01-01", end=end)
+    assert "history starts" in caplog.text
+    assert "ICE" in caplog.text
+    report = loader.coverage_report(frame, requested_start="2020-01-01")
+    gap = report.set_index("series_id").loc["BAMLH0A0HYM2", "history_gap_days"]
+    assert gap == (pd.Timestamp("2023-10-03") - pd.Timestamp("2020-01-01")).days
+
+
+def test_vendor_stale_price_runs_are_masked_before_returns(tmp_path: Path) -> None:
+    idx = pd.bdate_range("2020-01-02", periods=60)
+    prices = pd.Series(np.linspace(80.0, 85.0, len(idx)), index=idx)
+    prices.iloc[30:34] = prices.iloc[30]  # 3 zero returns: vendor artefact
+    prices.iloc[10:12] = prices.iloc[10]  # 1 zero return: kept
+    loader = _loader(tmp_path, etf_downloader=FakeEtfDownloader({"HYG": _etf_ohlcv(prices)}))
+    frame = loader.fetch_etf(["HYG"], start="2020-01-02", end=idx[-1].strftime("%Y-%m-%d"))
+    out = frame["HYG"]
+    assert out.iloc[30] == prices.iloc[30]
+    assert out.iloc[31:34].isna().all()
+    assert out.iloc[11] == prices.iloc[11]
+    assert out.notna().sum() == len(idx) - 3
