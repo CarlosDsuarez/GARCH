@@ -56,7 +56,7 @@ from scipy import stats
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.stattools import acf
 
-from data.quality import assert_no_stale_zero_returns
+from data.quality import assert_no_stale_zero_returns, stale_zero_run_bound
 from models.schema import (
     MeanConfig,
     ModelConfig,
@@ -505,8 +505,11 @@ class OASVolatilityModel:
                 f"insufficient observations for GARCH: {stress.r.shape[0]} < "
                 f"{self.config.min_observations}"
             )
+        guard = self.config.stale_zero_guard
         try:
-            assert_no_stale_zero_returns(stress.r)
+            assert_no_stale_zero_returns(
+                stress.r, max_run=stale_zero_run_bound(stress.r, **guard.model_dump())
+            )
         except ValueError as exc:
             raise ModelInvalidError(str(exc)) from exc
         self.stress = stress

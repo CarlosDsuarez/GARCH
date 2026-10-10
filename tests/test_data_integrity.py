@@ -14,7 +14,11 @@ from data.credit_loader import (
     SeriesValidationError,
     detect_spurious_coupon_drops,
 )
-from data.quality import assert_no_stale_zero_returns, longest_exact_zero_run
+from data.quality import (
+    assert_no_stale_zero_returns,
+    longest_exact_zero_run,
+    stale_zero_run_bound,
+)
 from helpers import FIXTURE_DIR, ensure_synthetic_fixtures
 
 
@@ -113,3 +117,35 @@ def test_t4_4_asof_merge_never_propagates_a_future_release_backward(tmp_path: Pa
     assert aligned.loc[pd.Timestamp("2024-01-24")] == pytest.approx(9.0)
     before_second = aligned.loc[: pd.Timestamp("2024-01-23")]
     assert (before_second.dropna() == 9.0).sum() == 0
+
+
+GUARD = {"floor": 2, "quantized_min_zero_share": 0.05, "sd_multiplier": 3.0}
+
+
+def test_t4_3_quantized_oas_tolerates_long_genuine_zero_runs() -> None:
+    """IG OAS printed to 1 bp: ~39% of daily changes are exactly zero."""
+    rng = np.random.default_rng(11)
+    n = 785
+    moves = rng.choice([-0.01, 0.0, 0.01], size=n, p=[0.305, 0.39, 0.305])
+    moves[400:410] = 0.0
+    r = pd.Series(moves, index=pd.bdate_range("2023-10-04", periods=n))
+    bound = stale_zero_run_bound(r, **GUARD)
+    assert longest_exact_zero_run(r) >= 10
+    assert bound >= longest_exact_zero_run(r)
+    assert_no_stale_zero_returns(r, max_run=bound)
+
+
+def test_t4_3_continuous_series_keeps_the_floor_so_forward_fill_still_fails() -> None:
+    rng = np.random.default_rng(12)
+    values = rng.normal(0.0, 0.02, size=500)
+    values[200:203] = 0.0
+    r = pd.Series(values, index=pd.bdate_range("2020-01-02", periods=500))
+    bound = stale_zero_run_bound(r, **GUARD)
+    assert bound == 2
+    with pytest.raises(ValueError, match="zero"):
+        assert_no_stale_zero_returns(r, max_run=bound)
+
+
+def test_t4_3_bound_is_empty_safe() -> None:
+    assert stale_zero_run_bound(pd.Series(dtype="float64"), **GUARD) == 2
+    assert stale_zero_run_bound(pd.Series([0.0, 0.0, 0.0]), **GUARD) == 2

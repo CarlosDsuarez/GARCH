@@ -213,6 +213,14 @@ class EbpModelConfig(BaseModel):
         return value
 
 
+class StaleZeroGuardConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    floor: int = Field(ge=1)
+    quantized_min_zero_share: float = Field(gt=0, lt=1)
+    sd_multiplier: float = Field(gt=0)
+
+
 class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -224,6 +232,7 @@ class ModelConfig(BaseModel):
     forecast: ForecastConfig
     sign_test: SignTestConfig
     min_observations: int = Field(gt=0)
+    stale_zero_guard: StaleZeroGuardConfig
     oas_universe: dict[str, OasUniverseEntry]
     plot: PlotConfig
     output: OutputConfig

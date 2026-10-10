@@ -49,6 +49,16 @@ sign_test:
 
 min_observations: 1000
 
+# Forward-fill guard on estimation returns (src/data/quality.py). Continuous
+# series allow at most `floor` consecutive exact zeros. Series printed on a
+# coarse grid (zero share >= quantized_min_zero_share, e.g. IG OAS at 1 bp is
+# flat on ~40% of days) get the Schilling (1990) longest-run bound
+# E[L] + sd_multiplier * sd(L) instead.
+stale_zero_guard:
+  floor: 2
+  quantized_min_zero_share: 0.05
+  sd_multiplier: 3.0
+
 oas_universe:
   BAMLH0A0HYM2:
     label: HY
