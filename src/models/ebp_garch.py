@@ -68,6 +68,7 @@ from models.oas_egarch import (
     ForecastResult,
     ModelInvalidError,
     SignConventionError,
+    _converged,
     assert_leverage_sign,
 )
 from models.schema import (
@@ -434,6 +435,11 @@ class EBPVolatilityModel:
             raise ModelInvalidError(
                 f"arch rescaled the series (scale={fitted.scale}); rescale=False was required"
             )
+        if not _converged(fitted):
+            raise ModelInvalidError(
+                f"optimizer did not converge (flag={fitted.convergence_flag}) "
+                f"for {self.series_id} {self.layer}"
+            )
         params = _param_table(fitted)
         omega = _first_param(params, ("omega",))
         alpha = _first_param(params, ("alpha[1]", "alpha"))
@@ -472,7 +478,7 @@ class EBPVolatilityModel:
             beta=beta,
             persistence=persistence,
             seed=self.config.seed,
-            converged=int(getattr(fitted, "convergence_flag", 0)) == 0,
+            converged=True,
             scale=float(getattr(fitted, "scale", 1.0)),
             may_originate=signal_may_originate(self.layer, self.config),
         )

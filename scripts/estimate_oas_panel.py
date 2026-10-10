@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Estimate the OAS EGARCH panel.")
     parser.add_argument("--data-config", type=Path, default=ROOT / "config" / "data.yaml")
     parser.add_argument("--model-config", type=Path, default=ROOT / "config" / "params.yaml")
+    parser.add_argument("--asof", type=str, default=None)
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args()
@@ -38,11 +39,12 @@ def main() -> int:
     model_cfg = load_model_config(args.model_config)
     loader = CreditDataLoader.from_yaml(args.data_config)
     start = loader.config.start_date.isoformat()
-    end = (
-        loader.config.end_date.isoformat()
-        if loader.config.end_date is not None
-        else date.today().isoformat()
-    )
+    if args.asof:
+        end = args.asof
+    elif loader.config.end_date is not None:
+        end = loader.config.end_date.isoformat()
+    else:
+        end = date.today().isoformat()
     series_ids = list(model_cfg.oas_universe)
     frame = loader.fetch_fred(
         series_ids, start=start, end=end, force_refresh=args.force_refresh

@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
 def _garch_named(params: pd.Series) -> dict[str, float]:
     values = {str(name): float(val) for name, val in params.items()}
     for raw, alias in (("omega", "omega"), ("alpha", "alpha"), ("beta", "beta"), ("gamma", "gamma")):
-        for name, val in values.items():
+        for name, val in list(values.items()):
             if raw in name.lower() and alias not in values:
                 values[alias] = val
     return values

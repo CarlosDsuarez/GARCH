@@ -302,3 +302,9 @@ def test_backtest_report_has_benchmarks_cost_sensitivity_and_failure_section(
     assert paths.html.exists()
     assert result.cost_sensitivity[3.0].sharpe is not None
     assert {"buy_hold", "oas_level", "vix", "realized_vol"} <= set(result.benchmarks)
+
+
+def test_level_benchmarks_accept_realized_vol_window_below_eight(tmp_path: Path) -> None:
+    # Schema allows realized_vol_window >= 5; min_periods must never exceed window.
+    result, _, _, _ = _run(tmp_path, benchmarks={"realized_vol_window": 5})
+    assert {"oas_level", "vix"} <= set(result.benchmarks)

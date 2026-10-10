@@ -570,11 +570,12 @@ class WalkForwardBacktester:
             )
 
         win = min(spec.realized_vol_window, max(len(panel) - 1, 2))
+        min_p = min(8, len(panel), win)
         oas_p = rolling_percentile_rank(
-            self.oas_level.reindex(panel.index).ffill(), window=win, min_periods=min(8, len(panel))
+            self.oas_level.reindex(panel.index).ffill(), window=win, min_periods=min_p
         )
         vix_p = rolling_percentile_rank(
-            self.vix.reindex(panel.index).ffill(), window=win, min_periods=min(8, len(panel))
+            self.vix.reindex(panel.index).ffill(), window=win, min_periods=min_p
         )
         thresh = spec.level_percentile / 100.0
         return {

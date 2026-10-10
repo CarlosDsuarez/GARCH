@@ -505,3 +505,28 @@ def test_indicator_matrix_logs_vix_and_hy() -> None:
     assert list(only.columns) == ["ln_vix"]
     assert full["ln_vix"].iloc[0] == pytest.approx(np.log(15.0))
     assert full["ln_hy"].iloc[0] == pytest.approx(np.log(5.0))
+
+
+def test_non_converged_ebp_fit_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helpers import simulate_gjr_garch
+
+    r = simulate_gjr_garch(480, seed=42, omega=0.02, alpha=0.08, gamma=0.18, beta=0.72, nu=8.0)
+    levels = (0.45 - r.cumsum()).rename("ebp")
+    original = EBPVolatilityModel._fit_mean
+
+    class _NotConverged:
+        convergence_flag = 4
+
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(
+        EBPVolatilityModel,
+        "_fit_mean",
+        lambda self, y, spec: _NotConverged(original(self, y, spec)),
+    )
+    with pytest.raises(ModelInvalidError, match="converge"):
+        EBPVolatilityModel(make_ebp_model_config(tmp_path), series_id="EBP").fit(levels)
