@@ -70,6 +70,7 @@ def _model_payload(tmp_path: Path, **overrides) -> dict:
             "reindex": False,
         },
         "sign_test": {"tail_percentile": 10.0, "min_tail_observations": 15},
+        "stale_zero_guard": {"floor": 2, "quantized_min_zero_share": 0.05, "sd_multiplier": 3.0},
         "min_observations": 80,
         "oas_universe": {
             "BAMLH0A0HYM2": {"label": "HY", "quality_rank": 4},

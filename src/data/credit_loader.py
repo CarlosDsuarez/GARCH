@@ -26,7 +26,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from data.quality import assert_no_stale_zero_returns
+from data.quality import assert_no_stale_zero_returns, mask_stale_price_runs
 from data.schema import CouponDropConfig, DataConfig, load_data_config
 
 logger = logging.getLogger(__name__)
@@ -486,6 +486,21 @@ class CreditDataLoader:
             series = self._get_or_download_etf(
                 ticker, start, end, force_refresh=force_refresh, auto_adjust=spec.auto_adjust
             )
+            stale_rule = self.config.etf_stale_price
+            series, masked = mask_stale_price_runs(
+                series,
+                max_zero_return_run=stale_rule.max_zero_return_run,
+                tolerance=stale_rule.tolerance,
+            )
+            if len(masked):
+                logger.warning(
+                    "masked %s vendor-stale prints in %s (identical adjusted close "
+                    "over > %s returns): %s",
+                    len(masked),
+                    ticker,
+                    stale_rule.max_zero_return_run,
+                    [d.date().isoformat() for d in masked],
+                )
             prices = series.dropna()
             returns = prices.pct_change()
             coupon = detect_spurious_coupon_drops(
@@ -530,8 +545,18 @@ class CreditDataLoader:
         series.attrs["config_fingerprint"] = meta.get("config_fingerprint", "")
         return series
 
-    def coverage_report(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Per-series range, observation count, and share of NaNs dropped ([D1])."""
+    def coverage_report(
+        self,
+        frame: pd.DataFrame,
+        *,
+        requested_start: date | datetime | str | None = None,
+    ) -> pd.DataFrame:
+        """Per-series range, observation count, and share of NaNs dropped ([D1]).
+
+        With ``requested_start`` the report adds ``history_gap_days``: calendar
+        days between the requested start and the first observation actually
+        served (vendor-truncated history shows up here).
+        """
         rows: list[dict[str, Any]] = []
         for column in frame.columns:
             series = frame[column]
@@ -539,17 +564,22 @@ class CreditDataLoader:
             n_obs = int(series.notna().sum())
             n_nan = n_raw - n_obs
             valid = series.dropna()
-            rows.append(
-                {
-                    "series_id": column,
-                    "start": valid.index.min().date() if n_obs else pd.NaT,
-                    "end": valid.index.max().date() if n_obs else pd.NaT,
-                    "n_raw": n_raw,
-                    "n_obs": n_obs,
-                    "n_nan_dropped": n_nan,
-                    "pct_nan_dropped": (100.0 * n_nan / n_raw) if n_raw else 0.0,
-                }
-            )
+            row: dict[str, Any] = {
+                "series_id": column,
+                "start": valid.index.min().date() if n_obs else pd.NaT,
+                "end": valid.index.max().date() if n_obs else pd.NaT,
+                "n_raw": n_raw,
+                "n_obs": n_obs,
+                "n_nan_dropped": n_nan,
+                "pct_nan_dropped": (100.0 * n_nan / n_raw) if n_raw else 0.0,
+            }
+            if requested_start is not None:
+                row["history_gap_days"] = (
+                    max(0, (valid.index.min() - _as_timestamp(requested_start)).days)
+                    if n_obs
+                    else None
+                )
+            rows.append(row)
         return pd.DataFrame(rows)
 
     def _must_be_non_negative(self, series_id: str) -> bool:
@@ -608,6 +638,7 @@ class CreditDataLoader:
         cached = self._try_load_covering(series_id, start, end, force_refresh)
         if cached is not None:
             logger.info("cache hit FRED series=%s", series_id)
+            self._warn_truncated_history(series_id, cached, start)
             return self._slice(cached, start, end)
 
         spec = self.config.fred_series[series_id]
@@ -616,13 +647,26 @@ class CreditDataLoader:
         if spec.publication_lag_days:
             obs_start = obs_start - pd.Timedelta(days=spec.publication_lag_days)
 
-        client = self._fred()
-        raw = client.get_series(
-            series_id,
-            observation_start=_iso_date(obs_start),
-            observation_end=_iso_date(obs_end),
-        )
+        try:
+            client = self._fred()
+            raw = client.get_series(
+                series_id,
+                observation_start=_iso_date(obs_start),
+                observation_end=_iso_date(obs_end),
+            )
+        except Exception as exc:
+            return self._stale_cache_or_raise(series_id, start, end, exc)
         series = self._normalize_series(raw, series_id)
+        if series.dropna().empty:
+            return self._stale_cache_or_raise(
+                series_id,
+                start,
+                end,
+                SeriesValidationError(
+                    f"FRED returned no data for {series_id} in {start}/{end}",
+                    issues=[f"empty FRED response for {series_id}"],
+                ),
+            )
         if spec.publication_lag_days:
             series = self.apply_publication_lag(series, spec.publication_lag_days)
             logger.info(
@@ -644,6 +688,7 @@ class CreditDataLoader:
             series.dropna().index.min() if series.notna().any() else None,
             series.dropna().index.max() if series.notna().any() else None,
         )
+        self._warn_truncated_history(series_id, series, start)
         return self._slice(series, start, end)
 
     def _get_or_download_etf(
@@ -665,15 +710,28 @@ class CreditDataLoader:
             download_end = download_end + pd.Timedelta(
                 days=self.config.etf_download.end_exclusive_shift_days
             )
-        downloader = self._etf()
-        frame = downloader(
-            ticker,
-            start=_iso_date(start),
-            end=_iso_date(download_end),
-            auto_adjust=auto_adjust,
-            progress=False,
-        )
-        series = self._extract_adjusted_close(frame, ticker)
+        try:
+            downloader = self._etf()
+            frame = downloader(
+                ticker,
+                start=_iso_date(start),
+                end=_iso_date(download_end),
+                auto_adjust=auto_adjust,
+                progress=False,
+            )
+            series = self._extract_adjusted_close(frame, ticker)
+        except Exception as exc:
+            return self._stale_cache_or_raise(ticker, start, end, exc)
+        if series.dropna().empty:
+            return self._stale_cache_or_raise(
+                ticker,
+                start,
+                end,
+                SeriesValidationError(
+                    f"ETF vendor returned no data for {ticker} in {start}/{end}",
+                    issues=[f"empty ETF response for {ticker}"],
+                ),
+            )
         self._write_cache(
             ticker,
             series,
@@ -724,6 +782,75 @@ class CreditDataLoader:
             )
             return None
         return cached
+
+    def _stale_cache_or_raise(
+        self,
+        series_id: str,
+        start: date | datetime | str,
+        end: date | datetime | str,
+        error: Exception,
+    ) -> pd.Series:
+        """Serve a recent-enough cache after a failed refresh, else re-raise.
+
+        The cache must carry this config's fingerprint, cover the requested
+        start, and end at most ``cache.max_staleness_days`` before ``end``.
+        """
+        path = self.cache_path(series_id)
+        if path.exists():
+            cached = self.load_cached(series_id)
+            req_start = cached.attrs.get("requested_start")
+            valid = cached.dropna()
+            usable = (
+                cached.attrs.get("config_fingerprint") == self._cache_fingerprint(series_id)
+                and bool(req_start)
+                and _as_timestamp(req_start) <= _as_timestamp(start)
+                and not valid.empty
+            )
+            if usable:
+                lag_days = int((_as_timestamp(end) - valid.index.max()).days)
+                if lag_days <= self.config.cache.max_staleness_days:
+                    logger.warning(
+                        "refresh of %s failed (%s: %s); serving stale cache last_obs=%s "
+                        "(%s days before requested end %s)",
+                        series_id,
+                        type(error).__name__,
+                        error,
+                        valid.index.max().date(),
+                        lag_days,
+                        end,
+                    )
+                    if series_id in self.config.fred_series:
+                        self._warn_truncated_history(series_id, cached, start)
+                    return self._slice(cached, start, end)
+        raise error
+
+    def _warn_truncated_history(
+        self,
+        series_id: str,
+        series: pd.Series,
+        start: date | datetime | str,
+    ) -> None:
+        valid = series.dropna()
+        if valid.empty:
+            return
+        gap = int((valid.index.min() - _as_timestamp(start)).days)
+        if gap < self.config.validation.history_gap_warning_days:
+            return
+        hint = ""
+        spec = self.config.fred_series.get(series_id)
+        if spec is not None and spec.series_type == "oas":
+            hint = (
+                "; FRED serves only recent ICE BofA OAS history (ICE licensing), "
+                "so the full history must come from a licensed source"
+            )
+        logger.warning(
+            "%s history starts %s although %s was requested (%s days later)%s",
+            series_id,
+            valid.index.min().date(),
+            _iso_date(start),
+            gap,
+            hint,
+        )
 
     def _cache_fingerprint(self, series_id: str) -> str:
         if series_id in self.config.fred_series:
@@ -829,7 +956,10 @@ class CreditDataLoader:
         key = os.environ.get(self.config.fred_api_key_env)
         if not key:
             raise RuntimeError(
-                f"environment variable {self.config.fred_api_key_env} is not set"
+                f"{self.config.fred_api_key_env} is not set. "
+                "Request a free key at https://fred.stlouisfed.org/docs/api/api_key.html "
+                f"then `export {self.config.fred_api_key_env}=...` in this shell "
+                "(or add it to ~/.zshrc). Tests do not need it."
             )
         self._fred_client = Fred(api_key=key)
         return self._fred_client

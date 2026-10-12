@@ -49,6 +49,16 @@ sign_test:
 
 min_observations: 1000
 
+# Forward-fill guard on estimation returns (src/data/quality.py). Continuous
+# series allow at most `floor` consecutive exact zeros. Series printed on a
+# coarse grid (zero share >= quantized_min_zero_share, e.g. IG OAS at 1 bp is
+# flat on ~40% of days) get the Schilling (1990) longest-run bound
+# E[L] + sd_multiplier * sd(L) instead.
+stale_zero_guard:
+  floor: 2
+  quantized_min_zero_share: 0.05
+  sd_multiplier: 3.0
+
 oas_universe:
   BAMLH0A0HYM2:
     label: HY
@@ -86,7 +96,11 @@ ebp:
     kpss_regression: c
     adf_maxlag: 12
   variance:
-    vol: GARCH
+    # EGARCH(1,1)-t, same family as OAS. GJR on monthly ΔEBP sat on the IGARCH
+    # boundary (α+γ/2+β = 1.0) for every sample 1973/1985/1990+, mean and scale
+    # tried — consistent with spurious integration from variance breaks
+    # (decade sd of ΔEBP 0.10–0.33). EGARCH 1973+: β≈0.965, γ<0, BIC ≤ GJR.
+    vol: EGARCH
     p: 1
     o: 1
     q: 1
@@ -95,8 +109,9 @@ ebp:
     maxiter: 2000
     half_life_mass: 0.5
     significance_level: 0.05
-    expected_gjr_gamma_sign: 1
-    stationarity_alpha_half_gamma_beta_max: 1.0
+    # r = -ΔEBP, so stress is r < 0; leverage means γ < 0 (as for OAS).
+    expected_egarch_gamma_sign: -1
+    stationarity_abs_beta_max: 1.0
   distribution:
     candidates: [t]
     selection_ic: bic

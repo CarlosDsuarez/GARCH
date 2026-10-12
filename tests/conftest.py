@@ -54,6 +54,7 @@ def make_test_config(tmp_path: Path, **overrides) -> DataConfig:
         "cache": {
             "directory": str(tmp_path / "cache"),
             "filename_template": "{series_id}.parquet",
+            "max_staleness_days": 7,
         },
         "validation": {
             "min_observations": 50,
@@ -61,6 +62,11 @@ def make_test_config(tmp_path: Path, **overrides) -> DataConfig:
             "reversal_tolerance": 0.10,
             "robust_sigma_constant": 1.4826,
             "min_level_points_for_jump_check": 3,
+            "history_gap_warning_days": 365,
+        },
+        "etf_stale_price": {
+            "max_zero_return_run": 2,
+            "tolerance": 1.0e-10,
         },
         "etf_coupon_drop_detection": {
             "min_abs_return": 0.003,

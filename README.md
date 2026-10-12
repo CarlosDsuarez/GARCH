@@ -1,12 +1,23 @@
 # GARCH credit
 
-Volatilidad condicional para crédito corporativo: OAS (EGARCH), EBP (GJR), VaR/ES por FHS, régimen, score de dislocación y overlay de exposición sobre pesos HRP.
+Volatilidad condicional para crédito corporativo: OAS (EGARCH), EBP (EGARCH), VaR/ES por FHS, régimen, score de dislocación y overlay de exposición sobre pesos HRP.
 
 Los umbrales viven en `config/`. El código no hardcodea knobs.
 
 ## Setup
 
-Python ≥ 3.11. Para datos en vivo: `FRED_API_KEY` en el entorno.
+Python ≥ 3.11.
+
+Los scripts de datos piden una clave **gratis** de FRED. Los tests no.
+
+1. Pídela en https://fred.stlouisfed.org/docs/api/api_key.html (cuenta + un clic).
+2. En la misma terminal donde vas a correr el repo:
+
+```bash
+export FRED_API_KEY="pega_aqui_la_clave"
+```
+
+Para no repetirlo: añade esa línea a `~/.zshrc`.
 
 ```bash
 python -m venv .venv
@@ -19,7 +30,7 @@ pip install -e ".[dev]"
 ```bash
 python scripts/bootstrap_data.py          # universo FRED + ETF
 python scripts/estimate_oas_panel.py      # EGARCH en las 5 series OAS
-python scripts/estimate_ebp.py            # GJR en EBP mensual / diario
+python scripts/estimate_ebp.py            # EGARCH en EBP mensual / diario
 python scripts/run_fhs.py                 # VaR / ES (FHS-GJR)
 python scripts/plot_dislocation.py --fit  # score histórico
 python scripts/run_signal_backtest.py     # walk-forward vs 4 benchmarks
@@ -40,7 +51,7 @@ CI: cobertura ≥ 80% en `src/`, ≥ 95% en `src/risk/` y `src/models/`.
 | Ruta | Qué es |
 |---|---|
 | `src/data/` | Ingesta, validación, Chow-Lin / EBP |
-| `src/models/` | OAS EGARCH, EBP GJR, régimen |
+| `src/models/` | OAS EGARCH, EBP EGARCH, régimen |
 | `src/risk/` | FHS, backtests VaR/ES, overlay |
 | `src/signals/` | Score de dislocación |
 | `src/backtest/` | Walk-forward de la señal |

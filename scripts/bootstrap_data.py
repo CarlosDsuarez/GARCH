@@ -62,40 +62,42 @@ def main() -> int:
     )
 
     rows = []
-    for series_id in loader.config.fred_series:
-        frame = loader.fetch_fred(
-            [series_id], start=start, end=end, force_refresh=args.force_refresh
-        )
+    failures: dict[str, str] = {}
+    universe = [("fred", sid) for sid in loader.config.fred_series] + [
+        ("etf", ticker) for ticker in loader.config.etf_tickers
+    ]
+    for kind, series_id in universe:
+        fetch = loader.fetch_fred if kind == "fred" else loader.fetch_etf
+        frame = fetch([series_id], start=start, end=end, force_refresh=args.force_refresh)
+        row = loader.coverage_report(frame, requested_start=start)
         try:
             loader.validate_series(frame[series_id], series_id=series_id)
-        except SeriesValidationError:
-            logging.exception("validation failed for FRED series %s", series_id)
-            raise
-        rows.append(loader.coverage_report(frame))
+            row["issues"] = ""
+        except SeriesValidationError as exc:
+            # Keep going: one short series must not hide the state of the rest.
+            logging.error("validation failed for %s %s: %s", kind.upper(), series_id, exc)
+            failures[series_id] = str(exc)
+            row["issues"] = str(exc)
+        rows.append(row)
         logging.info(
-            "FRED %s: dropped %s NaN of %s raw (%.1f%%)",
+            "%s %s: dropped %s NaN of %s raw (%.1f%%)",
+            kind.upper(),
             series_id,
-            int(rows[-1]["n_nan_dropped"].iloc[0]),
-            int(rows[-1]["n_raw"].iloc[0]),
-            float(rows[-1]["pct_nan_dropped"].iloc[0]),
+            int(row["n_nan_dropped"].iloc[0]),
+            int(row["n_raw"].iloc[0]),
+            float(row["pct_nan_dropped"].iloc[0]),
         )
-
-    for ticker in loader.config.etf_tickers:
-        frame = loader.fetch_etf(
-            [ticker], start=start, end=end, force_refresh=args.force_refresh
-        )
-        try:
-            loader.validate_series(frame[ticker], series_id=ticker)
-        except SeriesValidationError:
-            logging.exception("validation failed for ETF %s", ticker)
-            raise
-        rows.append(loader.coverage_report(frame))
 
     report = pd.concat(rows, ignore_index=True)
     out = loader.cache_dir / "coverage_report.csv"
     report.to_csv(out, index=False)
     print(report.to_string(index=False))
     print(f"\nWrote {out}")
+    if failures:
+        print(f"\n{len(failures)} series failed validation:")
+        for series_id, reason in failures.items():
+            print(f"  {series_id}: {reason}")
+        return 1
     return 0
 
 

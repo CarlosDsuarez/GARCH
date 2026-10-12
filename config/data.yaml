@@ -9,6 +9,11 @@ fred_api_key_env: "FRED_API_KEY"
 cache:
   directory: "data/cache"
   filename_template: "{series_id}.parquet"
+  # If a refresh fails (no FRED_API_KEY, network, empty vendor response) the
+  # loader serves the cache with a WARNING, provided its last observation is
+  # at most this many calendar days before the requested end. Covers a long
+  # weekend plus a holiday; anything older fails loudly.
+  max_staleness_days: 7
 
 validation:
   min_observations: 1000
@@ -16,6 +21,9 @@ validation:
   reversal_tolerance: 0.10
   robust_sigma_constant: 1.4826
   min_level_points_for_jump_check: 3
+  # FRED serves only ~3 years of ICE BofA OAS. Warn when a series starts this
+  # many calendar days after the requested start_date.
+  history_gap_warning_days: 365
 
 etf_coupon_drop_detection:
   # Raw (unadjusted) bond-ETF closes drop ~0.30%–0.60% on monthly ex-div dates.
@@ -218,6 +226,14 @@ etf_download:
   # yfinance.download(end=...) is exclusive of the end date; FRED is inclusive.
   end_date_exclusive: true
   end_exclusive_shift_days: 1
+
+etf_stale_price:
+  # Adjusted closes identical to 1e-10 for more than 2 consecutive returns are
+  # a vendor artefact (seen in HYG 2026-01-13..15), not a quiet market. The
+  # repeated prints are masked to NaN at ingestion; the stale-zero guard in
+  # src/data/quality.py is unchanged.
+  max_zero_return_run: 2
+  tolerance: 1.0e-10
 
 ebp:
   url: "https://www.federalreserve.gov/econres/notes/feds-notes/ebp_csv.csv"

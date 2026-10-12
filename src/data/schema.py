@@ -15,6 +15,9 @@ class CacheConfig(BaseModel):
 
     directory: str
     filename_template: str
+    # A failed refresh may fall back to a cache whose last observation is at
+    # most this many calendar days before the requested end.
+    max_staleness_days: int = Field(ge=0)
 
 
 class ValidationConfig(BaseModel):
@@ -25,6 +28,18 @@ class ValidationConfig(BaseModel):
     reversal_tolerance: float = Field(ge=0, le=1)
     robust_sigma_constant: float = Field(gt=0)
     min_level_points_for_jump_check: int = Field(ge=3)
+    # Warn when the first returned observation lands this many calendar days
+    # after the requested start (vendor-truncated history).
+    history_gap_warning_days: int = Field(gt=0)
+
+
+class EtfStalePriceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Identical adjusted closes over more than this many consecutive returns
+    # are a vendor artefact, not a quiet market; the repeats are masked.
+    max_zero_return_run: int = Field(ge=1)
+    tolerance: float = Field(ge=0)
 
 
 class CouponDropConfig(BaseModel):
@@ -139,6 +154,7 @@ class DataConfig(BaseModel):
     fred_series: dict[str, FredSeriesSpec]
     etf_tickers: dict[str, EtfSpec]
     etf_download: EtfDownloadConfig
+    etf_stale_price: EtfStalePriceConfig
     ebp: EbpDataConfig | None = None
 
 

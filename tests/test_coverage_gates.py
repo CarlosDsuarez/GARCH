@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from helpers import simulate_gjr_garch
+from helpers import simulate_egarch
 from models.ebp_garch import EBPVolatilityModel, originate_signal
 from models.oas_egarch import ModelInvalidError, OASVolatilityModel, fit_oas_universe
 from models.regime import RegimeDetector, RegimeError, realized_log_variance
@@ -164,15 +164,15 @@ def test_oas_from_yaml_and_plot_and_universe(tmp_path: Path) -> None:
     assert table.shape[0] == 1
 
 
-def test_ebp_gjr_fit_forecast_and_daily_layer(tmp_path: Path) -> None:
-    r = simulate_gjr_garch(480, seed=42, omega=0.02, alpha=0.08, gamma=0.18, beta=0.72, nu=8.0)
+def test_ebp_egarch_fit_forecast_and_daily_layer(tmp_path: Path) -> None:
+    r = simulate_egarch(480, seed=42, omega=-0.10, alpha=0.15, gamma=-0.12, beta=0.94)
     levels = (0.45 - r.cumsum()).rename("ebp")
     config = make_ebp_model_config(tmp_path)
     model = EBPVolatilityModel(config, series_id="EBP")
     model.fit(levels)
     report = model.summary()
     assert report.gamma is not None
-    assert report.gamma > 0.0
+    assert report.gamma < 0.0
     fcast = model.forecast()
     assert 1 in fcast.volatility
     vol = model.conditional_volatility()
@@ -205,8 +205,6 @@ def test_ebp_and_oas_error_helpers(tmp_path: Path) -> None:
     import risk.fhs as fhs_mod
     from models.ebp_garch import (
         SignConventionError,
-        assert_gjr_constraints,
-        gjr_half_life,
         originate_signal,
     )
     from models.oas_egarch import SignConventionError as OASSignError
@@ -219,17 +217,6 @@ def test_ebp_and_oas_error_helpers(tmp_path: Path) -> None:
     config = make_ebp_model_config(tmp_path)
     with pytest.raises(ModelInvalidError, match="originate"):
         originate_signal("daily_full", fired=True, config=config)
-
-    class _Spec:
-        stationarity_alpha_half_gamma_beta_max = 1.0
-        half_life_mass = 0.5
-
-    with pytest.raises(ModelInvalidError):
-        assert_gjr_constraints(0.02, 0.05, 0.10, -0.01, _Spec())
-    with pytest.raises(ModelInvalidError):
-        assert_gjr_constraints(0.02, 0.05, -0.10, 0.80, _Spec())
-    with pytest.raises(ModelInvalidError):
-        gjr_half_life(0.0, 0.0, 0.0, _Spec())
 
     idx = pd.bdate_range("2020-01-02", periods=8)
     level = pd.Series(np.linspace(0.4, 0.5, 8), index=idx)
@@ -462,14 +449,6 @@ def test_schema_validators_and_remaining_error_branches(tmp_path: Path) -> None:
         arma_model._fit_one(r_stress, mean_spec="ARMA(1,1)", dist="t")
     except Exception:
         pass
-
-    from models.ebp_garch import assert_gjr_constraints
-
-    class _Spec:
-        stationarity_alpha_half_gamma_beta_max = 1.0
-
-    with pytest.raises(ModelInvalidError, match="alpha"):
-        assert_gjr_constraints(0.02, -0.01, 0.10, 0.80, _Spec())
 
     with pytest.raises(RegimeError, match="empty"):
         realized_log_variance(pd.Series([0.01], index=pd.bdate_range("2020-01-02", periods=1)), 2)

@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
 def _garch_named(params: pd.Series) -> dict[str, float]:
     values = {str(name): float(val) for name, val in params.items()}
     for raw, alias in (("omega", "omega"), ("alpha", "alpha"), ("beta", "beta"), ("gamma", "gamma")):
-        for name, val in values.items():
+        for name, val in list(values.items()):
             if raw in name.lower() and alias not in values:
                 values[alias] = val
     return values
@@ -121,7 +121,7 @@ class OASWalkForwardEstimator:
 
 
 class EBPWalkForwardEstimator:
-    """Fit monthly GJR-GARCH; map frozen sigma onto the daily calendar."""
+    """Fit monthly EBP EGARCH; map frozen sigma onto the daily calendar."""
 
     def __init__(self, config: ModelConfig, series_id: str = "EBP") -> None:
         self.config = config
@@ -221,7 +221,9 @@ def main() -> int:
     fred_ids = [hy_id, vix_id, spec.ccc_series_id, spec.bbb_series_id]
     oas = credit.fetch_fred(fred_ids, start=start, end=asof, force_refresh=args.force_refresh)
     prices = credit.fetch_etf([ticker], start=start, end=asof, force_refresh=args.force_refresh)
-    credit_returns = prices[ticker].astype("float64").pct_change().rename("credit_return")
+    credit_returns = (
+        prices[ticker].dropna().astype("float64").pct_change().rename("credit_return")
+    )
 
     calendar = (
         credit_returns.dropna().index.intersection(oas[hy_id].dropna().index).intersection(

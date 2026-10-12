@@ -1,4 +1,4 @@
-"""Fit GJR-GARCH on official monthly EBP and write the three-layer report.
+"""Fit EGARCH on official monthly EBP and write the three-layer report.
 
 Usage
 -----
@@ -29,13 +29,26 @@ from models.schema import load_model_config  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Estimate EBP GJR-GARCH layers.")
+    parser = argparse.ArgumentParser(description="Estimate EBP EGARCH layers.")
     parser.add_argument("--data-config", type=Path, default=ROOT / "config" / "data.yaml")
     parser.add_argument("--model-config", type=Path, default=ROOT / "config" / "params.yaml")
     parser.add_argument("--asof", type=str, default=None)
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args()
+
+
+def _indicator_layers(
+    vix: pd.Series, hy_oas: pd.Series, t10y2y: pd.Series
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Full and VIX-only anchors, built separately.
+
+    The full matrix drops rows without HY OAS; the VIX-only layer must keep
+    its own (longer) history or the robustness check compares the same window.
+    """
+    full = build_indicator_matrix(vix, hy_oas, t10y2y, vix_only=False)
+    vix_only = build_indicator_matrix(vix, hy_oas, t10y2y, vix_only=True)
+    return full, vix_only
 
 
 def _annualize(vol: pd.Series, periods_per_year: float) -> pd.Series:
@@ -66,17 +79,16 @@ def main() -> int:
         end=asof,
         force_refresh=args.force_refresh,
     )
-    indicators = build_indicator_matrix(
+    full_indicators, vix_indicators = _indicator_layers(
         anchors[spec.vix_series_id],
         anchors[spec.hy_oas_series_id],
         anchors[spec.t10y2y_series_id],
-        vix_only=False,
     )
     daily_full = ebp_loader.disaggregate(
-        indicators, asof=asof, config=model_cfg.ebp.disaggregation
+        full_indicators, asof=asof, config=model_cfg.ebp.disaggregation
     )
     daily_vix = ebp_loader.disaggregate(
-        indicators, vix_only=True, asof=asof, config=model_cfg.ebp.disaggregation
+        vix_indicators, vix_only=True, asof=asof, config=model_cfg.ebp.disaggregation
     )
 
     monthly_model = EBPVolatilityModel(
